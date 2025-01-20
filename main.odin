@@ -6,6 +6,7 @@ import "core:fmt"
 import "core:strings"
 import "odin-http/client"
 import http "odin-http"
+import "core:encoding/json"
 
 main :: proc() {
   server : http.Server
@@ -17,41 +18,35 @@ main :: proc() {
   routed := http.router_handler(&router)
   http.listen_and_serve(&server, routed, net.Endpoint {
     address = net.IP4_Address{127, 0, 0, 1},
-    port = 2469
+    port = 7777
   })
 }
 
 index :: proc(request: ^http.Request, response: ^http.Response) {
-  http.body(request, -1, response, download_files)
+  http.body(request, -1, response, acknowledge)
 }
 
-download_files :: proc(response: rawptr, body: http.Body, err: http.Body_Error) {
-  response := cast(^http.Response)response
-  if err != nil {
-    http.respond(response, http.body_error_status(err))
-  }
-  line_count := strings.count(body, "\n")
-  req_headers: http.Headers
-  http.headers_init(&req_headers)
-  for header in strings.split(body, "\n") {
-    if header == "Url:" {break};
-    index := strings.index(header, ":")
-    key, _ := strings.substring(header, 0, index)
-    value, _ := strings.substring(header, index+1, len(header))
-    req_headers._kv[key] = value
-  }
-  data, ok := make_request(slice.last(strings.split_lines(body)), &req_headers)
-  headers: http.Headers
-  http.headers_init(&headers)
-  headers._kv["Access-Control-Allow-Origin"] = "*"
-  headers._kv["Access-Control-Allow-Methods"] = "*"
-  response.headers = headers
-  if ok {
-    response.status = http.Status.OK
-    http.respond_file_content(response, "file.ts", transmute([]u8)data)
-  }else{
+PingBody :: struct {
+    type: u8
+}
+
+acknowledge :: proc(response: rawptr, body: http.Body, err: http.Body_Error) {
+    response := cast(^http.Response)response
+    if err != nil {
+        http.respond(response, http.body_error_status(err))
+        return
+    }
+    ping : PingBody
+    marshal_err := json.unmarshal(transmute([]u8)body, &ping)
+    if marshal_err != nil {
+        http.respond_with_status(response, http.Status.Bad_Request)
+        return
+    }
+    if ping.type == 0 {
+        http.respond_with_status(response, http.Status.No_Content)
+        return
+    }
     http.respond_with_status(response, http.Status.Bad_Request)
-  }
 }
 
 make_request :: proc(url: string, headers: ^http.Headers) -> (string, bool) {
