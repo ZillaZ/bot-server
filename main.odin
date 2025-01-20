@@ -7,6 +7,11 @@ import "core:strings"
 import "odin-http/client"
 import http "odin-http"
 import "core:encoding/json"
+import "core:crypto/ed25519"
+import "core:encoding/hex"
+import "core:os"
+
+PUBLIC_API_KEY := os.get_env("PUBLIC_API_KEY")
 
 main :: proc() {
     server : http.Server
@@ -21,9 +26,11 @@ main :: proc() {
         port = 7777
     })
 }
-
 index :: proc(request: ^http.Request, response: ^http.Response) {
-    fmt.println(request.headers)
+    timestamp := request.headers._kv["x-signature-timestamp"]
+    signature := request.headers._kv["x-signature-ed25519"]
+    http.headers_set(&response.headers, "signature", signature)
+    http.headers_set(&response.headers, "timestamp", timestamp)
     http.body(request, -1, response, acknowledge)
 }
 
@@ -33,11 +40,29 @@ PingBody :: struct {
 
 acknowledge :: proc(response: rawptr, body: http.Body, err: http.Body_Error) {
     fmt.println(body)
+
     response := cast(^http.Response)response
+
+    timestamp := http.headers_get(response.headers, "timestamp")
+    signature := http.headers_get(response.headers, "signature")
+
+    concatenated, _ := strings.concatenate({timestamp, body})
+    decoded_signature, _ := hex.decode(transmute([]u8)signature)
+    decoded_public_key, _ := hex.decode(transmute([]u8)PUBLIC_API_KEY)
+
+    public_key : ed25519.Public_Key
+    ed25519.public_key_set_bytes(&public_key, decoded_public_key)
+
+    if !ed25519.verify(&public_key, transmute([]u8)concatenated, decoded_signature) {
+        http.respond_with_status(response, http.Status.Unauthorized)
+        return
+    }
+
     if err != nil {
         http.respond(response, http.body_error_status(err))
         return
     }
+
     ping : PingBody
     marshal_err := json.unmarshal(transmute([]u8)body, &ping)
     if marshal_err != nil {
@@ -49,25 +74,4 @@ acknowledge :: proc(response: rawptr, body: http.Body, err: http.Body_Error) {
         return
     }
     http.respond_with_status(response, http.Status.Bad_Request)
-}
-
-make_request :: proc(url: string, headers: ^http.Headers) -> (string, bool) {
-    request: client.Request
-    client.request_init(&request)
-    request.headers = headers^
-        response, err := client.request(&request, url)
-    if err != nil {
-        return "Internal Server Error", false
-    }
-
-    if !http.status_is_success(response.status) {
-        fmt.println("failed")
-        return http.status_string(response.status), false
-    }
-    fmt.println(http.status_string(response.status))
-    type, _, e := client.response_body(&response)
-    if e != nil {
-        return "Internal server error while reading response body", false
-    }
-    return type.(client.Body_Plain), true
 }
