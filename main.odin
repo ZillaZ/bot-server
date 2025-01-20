@@ -9,21 +9,22 @@ import http "odin-http"
 import "core:encoding/json"
 
 main :: proc() {
-  server : http.Server
-  http.server_shutdown_on_interrupt(&server)
-  router : http.Router
-  http.router_init(&router)
-  defer http.router_destroy(&router)
-  http.route_post(&router, "/", http.handler(index))
-  routed := http.router_handler(&router)
-  http.listen_and_serve(&server, routed, net.Endpoint {
-    address = net.IP4_Address{127, 0, 0, 1},
-    port = 7777
-  })
+    server : http.Server
+    http.server_shutdown_on_interrupt(&server)
+    router : http.Router
+    http.router_init(&router)
+    defer http.router_destroy(&router)
+    http.route_post(&router, "/", http.handler(index))
+    routed := http.router_handler(&router)
+    http.listen_and_serve(&server, routed, net.Endpoint {
+        address = net.IP4_Address{127, 0, 0, 1},
+        port = 7777
+    })
 }
 
 index :: proc(request: ^http.Request, response: ^http.Response) {
-  http.body(request, -1, response, acknowledge)
+    fmt.println(request.headers)
+    http.body(request, -1, response, acknowledge)
 }
 
 PingBody :: struct {
@@ -31,6 +32,7 @@ PingBody :: struct {
 }
 
 acknowledge :: proc(response: rawptr, body: http.Body, err: http.Body_Error) {
+    fmt.println(body)
     response := cast(^http.Response)response
     if err != nil {
         http.respond(response, http.body_error_status(err))
@@ -50,22 +52,22 @@ acknowledge :: proc(response: rawptr, body: http.Body, err: http.Body_Error) {
 }
 
 make_request :: proc(url: string, headers: ^http.Headers) -> (string, bool) {
-  request: client.Request
-  client.request_init(&request)
-  request.headers = headers^
-  response, err := client.request(&request, url)
-  if err != nil {
-    return "Internal Server Error", false
-  }
+    request: client.Request
+    client.request_init(&request)
+    request.headers = headers^
+        response, err := client.request(&request, url)
+    if err != nil {
+        return "Internal Server Error", false
+    }
 
-  if !http.status_is_success(response.status) {
-    fmt.println("failed")
-    return http.status_string(response.status), false
-  }
-  fmt.println(http.status_string(response.status))
-  type, _, e := client.response_body(&response)
-  if e != nil {
-    return "Internal server error while reading response body", false
-  }
-  return type.(client.Body_Plain), true
+    if !http.status_is_success(response.status) {
+        fmt.println("failed")
+        return http.status_string(response.status), false
+    }
+    fmt.println(http.status_string(response.status))
+    type, _, e := client.response_body(&response)
+    if e != nil {
+        return "Internal server error while reading response body", false
+    }
+    return type.(client.Body_Plain), true
 }
